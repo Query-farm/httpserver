@@ -141,6 +141,7 @@ void ResultSerializer::SerializeValue( // NOLINT(*-no-recursion)
 	case LogicalTypeId::TIMESTAMP_NS:
 	case LogicalTypeId::TIMESTAMP_TZ:
 	case LogicalTypeId::TIME_TZ:
+	case LogicalTypeId::TIME_NS:
 		// Enum
 	case LogicalTypeId::ENUM:
 		// Strings
@@ -149,7 +150,7 @@ void ResultSerializer::SerializeValue( // NOLINT(*-no-recursion)
 	case LogicalTypeId::STRING_LITERAL:
 		val = yyjson_mut_strcpy(doc, value.GetValue<string>().c_str());
 		break;
-	case LogicalTypeId::VARINT:
+	case LogicalTypeId::BIGNUM:
 		val = yyjson_mut_strcpy(doc, value.DefaultCastAs(LogicalTypeId::VARCHAR).GetValue<string>().c_str());
 		break;
 		// UUID
@@ -232,6 +233,8 @@ void ResultSerializer::SerializeValue( // NOLINT(*-no-recursion)
 	case LogicalTypeId::ANY:
 	case LogicalTypeId::UNKNOWN:
 	case LogicalTypeId::INVALID:
+	case LogicalTypeId::TEMPLATE:
+	case LogicalTypeId::VARIANT:
 		if (set_invalid_values_to_null) {
 			goto null_handle;
 		}

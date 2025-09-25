@@ -19,6 +19,7 @@ add_custom_command(
   DEPENDS ${PROJECT_SOURCE_DIR}/src/assets/index.html)
 
 set(EXTENSION_SOURCES src/httpserver_extension.cpp src/result_serializer.cpp
+src/query_farm_telemetry.cpp
                       ${CMAKE_CURRENT_BINARY_DIR}/playground.hpp)
 
 if(MINGW)
