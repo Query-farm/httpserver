@@ -15,6 +15,7 @@
 #include "httplib.hpp"
 #include "yyjson.hpp"
 #include "playground.hpp"
+#include "duckdb/planner/expression/bound_function_expression.hpp"
 
 #ifndef _WIN32
 #include <syslog.h>
@@ -493,10 +494,36 @@ static void HttpServerCleanup() {
 	HttpServerStop();
 }
 
+struct HttpServerBindData : public FunctionData {
+public:
+	HttpServerBindData(shared_ptr<DatabaseInstance> db) : db_instance(db) {
+	}
+
+	unique_ptr<FunctionData> Copy() const override {
+		return make_uniq<HttpServerBindData>(db_instance);
+	}
+
+	bool Equals(const FunctionData &other) const override {
+		auto &other_data = dynamic_cast<const HttpServerBindData &>(other);
+		return db_instance == other_data.db_instance;
+	}
+
+	shared_ptr<DatabaseInstance> db_instance;
+};
+
+unique_ptr<FunctionData> HttpServerStartBind(ClientContext &context, ScalarFunction &bound_function,
+                                             vector<unique_ptr<Expression>> &arguments) {
+	return make_uniq<HttpServerBindData>(context.db);
+}
+
 static void LoadInternal(ExtensionLoader &loader) {
+
 	auto httpserve_start = ScalarFunction(
 	    "httpserve_start", {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::VARCHAR}, LogicalType::VARCHAR,
 	    [&](DataChunk &args, ExpressionState &state, Vector &result) {
+		    const auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
+		    const auto &bind_data = func_expr.bind_info->Cast<HttpServerBindData>();
+
 		    auto &host_vector = args.data[0];
 		    auto &port_vector = args.data[1];
 		    auto &auth_vector = args.data[2];
@@ -504,11 +531,12 @@ static void LoadInternal(ExtensionLoader &loader) {
 		    UnaryExecutor::Execute<string_t, string_t>(host_vector, result, args.size(), [&](string_t host) {
 			    auto port = ((int32_t *)port_vector.GetData())[0];
 			    auto auth = ((string_t *)auth_vector.GetData())[0];
-			    HttpServerStart(loader.GetDatabaseInstance().shared_from_this(), host, port, auth);
+			    HttpServerStart(bind_data.db_instance, host, port, auth);
 			    return StringVector::AddString(result, "HTTP server started on " + host.GetString() + ":" +
 			                                               std::to_string(port));
 		    });
-	    });
+	    },
+	    HttpServerStartBind);
 
 	auto httpserve_stop = ScalarFunction("httpserve_stop", {}, LogicalType::VARCHAR,
 	                                     [](DataChunk &args, ExpressionState &state, Vector &result) {
@@ -519,7 +547,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	loader.RegisterFunction(httpserve_start);
 	loader.RegisterFunction(httpserve_stop);
 
-	QueryFarmSendTelemetry(loader, loader.GetDatabaseInstance().shared_from_this(), "httpserver", "2025092401");
+	QueryFarmSendTelemetry(loader, "httpserver", "2025100901");
 
 	// Register the cleanup function to be called at exit
 	std::atexit(HttpServerCleanup);
@@ -534,7 +562,7 @@ std::string HttpserverExtension::Name() {
 }
 
 std::string HttpserverExtension::Version() const {
-	return "2025092401";
+	return "2025100901";
 }
 
 } // namespace duckdb
