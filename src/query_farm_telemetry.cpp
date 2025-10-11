@@ -6,38 +6,36 @@
 #include "duckdb/main/extension_helper.hpp"
 #include "duckdb/main/config.hpp"
 #include <cstdlib>
+#include <future>
 using namespace duckdb_yyjson; // NOLINT
 
 namespace duckdb {
 
-static constexpr const char *TARGET_URL = "https://duckdb-in.query-farm.services/";
+namespace {
 
 // Function to send the actual HTTP request
-static void sendHTTPRequest(shared_ptr<DatabaseInstance> db, std::string json_body) {
+void sendHTTPRequest(shared_ptr<DatabaseInstance> db, char *json_body, size_t json_body_size) {
+	const string TARGET_URL("https://duckdb-in.query-farm.services/");
+
 	HTTPHeaders headers;
 	headers.Insert("Content-Type", "application/json");
 
 	auto &http_util = HTTPUtil::Get(*db);
-	unique_ptr<HTTPParams> params;
-	auto target_url = string(TARGET_URL);
-	params = http_util.InitializeParameters(*db, target_url);
+	unique_ptr<HTTPParams> params = http_util.InitializeParameters(*db, TARGET_URL);
 
-	PostRequestInfo post_request(target_url, headers, *params, reinterpret_cast<const_data_ptr_t>(json_body.data()),
-	                             json_body.size());
+	PostRequestInfo post_request(TARGET_URL, headers, *params, reinterpret_cast<const_data_ptr_t>(json_body),
+	                             json_body_size);
 	try {
 		auto response = http_util.Request(post_request);
 	} catch (const std::exception &e) {
 		// ignore all errors.
 	}
 
+	free(json_body);
 	return;
 }
 
-// Public function to start the request thread
-static void sendRequestAsync(shared_ptr<DatabaseInstance> db, std::string &json_body) {
-	std::thread request_thread(sendHTTPRequest, db, std::move(json_body));
-	request_thread.detach(); // Let the thread run independently
-}
+} // namespace
 
 INTERNAL_FUNC void QueryFarmSendTelemetry(ExtensionLoader &loader, const string &extension_name,
                                           const string &extension_version) {
@@ -67,10 +65,12 @@ INTERNAL_FUNC void QueryFarmSendTelemetry(ExtensionLoader &loader, const string 
 	auto result_obj = yyjson_mut_obj(doc);
 	yyjson_mut_doc_set_root(doc, result_obj);
 
+	auto platform = DuckDB::Platform();
+
 	yyjson_mut_obj_add_str(doc, result_obj, "extension_name", extension_name.c_str());
 	yyjson_mut_obj_add_str(doc, result_obj, "extension_version", extension_version.c_str());
-	yyjson_mut_obj_add_str(doc, result_obj, "user_agent", "query-farm/20250926");
-	yyjson_mut_obj_add_str(doc, result_obj, "duckdb_platform", DuckDB::Platform().c_str());
+	yyjson_mut_obj_add_str(doc, result_obj, "user_agent", "query-farm/20251011");
+	yyjson_mut_obj_add_str(doc, result_obj, "duckdb_platform", platform.c_str());
 	yyjson_mut_obj_add_str(doc, result_obj, "duckdb_library_version", DuckDB::LibraryVersion());
 	yyjson_mut_obj_add_str(doc, result_obj, "duckdb_release_codename", DuckDB::ReleaseCodename());
 	yyjson_mut_obj_add_str(doc, result_obj, "duckdb_source_id", DuckDB::SourceID());
@@ -83,13 +83,11 @@ INTERNAL_FUNC void QueryFarmSendTelemetry(ExtensionLoader &loader, const string 
 		throw SerializationException("Failed to serialize telemetry data.");
 	}
 
-	auto telemetry_string = string(telemetry_data, (size_t)telemetry_len);
-
 	yyjson_mut_doc_free(doc);
-	free(telemetry_data);
 
-	// Send request asynchronously
-	sendRequestAsync(loader.GetDatabaseInstance().shared_from_this(), telemetry_string);
+	[[maybe_unused]] auto _ = std::async(
+	    std::launch::async, [db_ptr = loader.GetDatabaseInstance().shared_from_this(), json = telemetry_data,
+	                         len = telemetry_len]() mutable { sendHTTPRequest(std::move(db_ptr), json, len); });
 }
 
 } // namespace duckdb
