@@ -26,6 +26,23 @@ namespace duckdb
 
 	using namespace duckdb_yyjson; // NOLINT(*-build-using-namespace)
 
+	// httplib defaults to a thread pool when OpenSSL is enabled. With statically
+	// linked OpenSSL on Linux this can segfault in worker threads, so handle
+	// requests synchronously on the server thread instead.
+	class SynchronousTaskQueue : public duckdb_httplib_openssl::TaskQueue
+	{
+	public:
+		bool enqueue(std::function<void()> fn) override
+		{
+			fn();
+			return true;
+		}
+
+		void shutdown() override
+		{
+		}
+	};
+
 	struct HttpServerState
 	{
 		std::unique_ptr<duckdb_httplib_openssl::Server> server;
@@ -384,6 +401,12 @@ namespace duckdb
 			std::string error_message = "DB::Exception: " + std::string(ex.what());
 			res.set_content(error_message, "text/plain");
 		}
+		catch (const std::exception &ex)
+		{
+			res.status = 500;
+			std::string error_message = "DB::Exception: " + std::string(ex.what());
+			res.set_content(error_message, "text/plain");
+		}
 	}
 
 	void HttpServerStart(shared_ptr<DatabaseInstance> db, string_t host, int32_t port, string_t auth = string_t())
@@ -395,6 +418,7 @@ namespace duckdb
 
 		global_state.db_instance = db;
 		global_state.server = make_uniq<duckdb_httplib_openssl::Server>();
+		global_state.server->new_task_queue = []() { return new SynchronousTaskQueue(); };
 		global_state.is_running = true;
 		global_state.auth_token = auth.GetString();
 
