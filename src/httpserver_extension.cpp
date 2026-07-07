@@ -580,9 +580,10 @@ namespace duckdb
 
 	static void LoadInternal(ExtensionLoader &loader)
 	{
+		auto db = loader.GetDatabaseInstance().shared_from_this();
 		auto httpserve_start = ScalarFunction(
 				"httpserve_start", {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::VARCHAR}, LogicalType::VARCHAR,
-				[&](DataChunk &args, ExpressionState &state, Vector &result)
+				[db](DataChunk &args, ExpressionState &state, Vector &result)
 				{
 					auto &host_vector = args.data[0];
 					auto &port_vector = args.data[1];
@@ -592,7 +593,7 @@ namespace duckdb
 																										 {
 			    auto port = ((int32_t *)port_vector.GetData())[0];
 			    auto auth = ((string_t *)auth_vector.GetData())[0];
-			    HttpServerStart(loader.GetDatabaseInstance().shared_from_this(), host, port, auth);
+			    HttpServerStart(db, host, port, auth);
 			    return StringVector::AddString(result, "HTTP server started on " + host.GetString() + ":" +
 			                                               std::to_string(port)); });
 				});
