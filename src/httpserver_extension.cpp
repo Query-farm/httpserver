@@ -10,6 +10,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/common/allocator.hpp"
+#include "duckdb/main/database.hpp"
 #include "result_serializer.hpp"
 #include "result_serializer_compact_json.hpp"
 #include "httplib.hpp"
@@ -582,17 +583,20 @@ namespace duckdb
 	{
 		auto httpserve_start = ScalarFunction(
 				"httpserve_start", {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::VARCHAR}, LogicalType::VARCHAR,
-				[&](DataChunk &args, ExpressionState &state, Vector &result)
+				[](DataChunk &args, ExpressionState &state, Vector &result)
 				{
 					auto &host_vector = args.data[0];
 					auto &port_vector = args.data[1];
 					auto &auth_vector = args.data[2];
+					// The database is taken from the executing context; the ExtensionLoader only lives for the
+					// duration of LoadInternal, so it must not be captured here.
+					auto db = DatabaseInstance::GetDatabase(state.GetContext()).shared_from_this();
 
 					UnaryExecutor::Execute<string_t, string_t>(host_vector, result, args.size(), [&](string_t host)
 																										 {
 			    auto port = ((int32_t *)port_vector.GetData())[0];
 			    auto auth = ((string_t *)auth_vector.GetData())[0];
-			    HttpServerStart(loader.GetDatabaseInstance().shared_from_this(), host, port, auth);
+			    HttpServerStart(db, host, port, auth);
 			    return StringVector::AddString(result, "HTTP server started on " + host.GetString() + ":" +
 			                                               std::to_string(port)); });
 				});
