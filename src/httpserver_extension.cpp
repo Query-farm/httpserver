@@ -624,7 +624,7 @@ namespace duckdb
 		loader.RegisterFunction(httpserve_start);
 		loader.RegisterFunction(httpserve_stop);
 
-		QueryFarmSendTelemetry(loader, "httpserver", "2026072501");
+		QueryFarmSendTelemetry(loader, "httpserver", "2026102001");
 
 		// Register the cleanup function to be called at exit
 		std::atexit(HttpServerCleanup);
@@ -642,7 +642,7 @@ namespace duckdb
 
 	std::string HttpserverExtension::Version() const
 	{
-		return "2026072501";
+		return "2026102001";
 	}
 
 } // namespace duckdb
