@@ -22,6 +22,10 @@ HTTP server started on 0.0.0.0:8123
 
 require json
 
+# Reading over HTTP needs httpfs, which may not be published for this DuckDB
+# version yet; skip the rest of the file when it cannot be loaded.
+require httpfs
+
 query I
 SELECT * FROM read_json_auto('http://localhost:8123/?q=SELECT 1');
 ----
