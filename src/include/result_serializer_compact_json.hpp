@@ -13,7 +13,7 @@ public:
 		yyjson_mut_doc_set_root(doc, root);
 	}
 
-	std::string Serialize(MaterializedQueryResult &query_result, const ReqStats &stats) {
+	std::string Serialize(QueryResult &query_result, const ReqStats &stats) {
 		// Metadata about the query result
 		yyjson_mut_val *yy_meta = GetMeta(query_result);
 		yyjson_mut_obj_add_val(doc, root, "meta", yy_meta);
@@ -41,7 +41,7 @@ private:
 			yyjson_mut_obj_add_strcpy(doc, column_obj, "name", query_result.ColumnName(col).c_str());
 			yyjson_mut_arr_append(meta_array, column_obj);
 			// @paul Did you find out if result.RowCount() == 0 is needed?
-			std::string tp(query_result.types[col].ToString());
+			std::string tp(query_result.GetTypes()[col].ToString());
 			yyjson_mut_obj_add_strcpy(doc, column_obj, "type", tp.c_str());
 		}
 

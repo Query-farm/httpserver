@@ -1,6 +1,5 @@
 #include "result_serializer.hpp"
 
-#include "duckdb/common/extra_type_info.hpp"
 #include "duckdb/common/types/uuid.hpp"
 
 #include <cmath>
@@ -15,8 +14,11 @@ namespace duckdb {
 void ResultSerializer::SerializeInternal(QueryResult &query_result, yyjson_mut_val *append_root,
                                          const bool values_as_array) {
 	auto chunk = query_result.Fetch();
-	auto names = query_result.names;
-	auto types = query_result.types;
+	vector<string> names;
+	for (auto &name : query_result.GetNames()) {
+		names.push_back(name.GetIdentifierName());
+	}
+	auto types = query_result.GetTypes();
 
 	while (chunk) {
 		SerializeChunk(*chunk, names, types, append_root, values_as_array);
@@ -140,6 +142,7 @@ void ResultSerializer::SerializeValue( // NOLINT(*-no-recursion)
 	case LogicalTypeId::TIMESTAMP:
 	case LogicalTypeId::TIMESTAMP_NS:
 	case LogicalTypeId::TIMESTAMP_TZ:
+	case LogicalTypeId::TIMESTAMP_TZ_NS:
 	case LogicalTypeId::TIME_TZ:
 	case LogicalTypeId::TIME_NS:
 		// Enum
@@ -182,19 +185,27 @@ void ResultSerializer::SerializeValue( // NOLINT(*-no-recursion)
 		}
 		break;
 	}
+	case LogicalTypeId::TUPLE: {
+		// unnamed struct: serialize as an array (as unnamed STRUCTs were before DuckDB 2.0)
+		const auto &children = StructValue::GetChildren(value);
+		val = yyjson_mut_arr(doc);
+		for (auto &child : children) {
+			SerializeValue(val, child, nullptr, child.type());
+		}
+		break;
+	}
 	case LogicalTypeId::STRUCT: {
 		const auto &children = StructValue::GetChildren(value);
-		const auto &type_info = value.type().AuxInfo()->Cast<StructTypeInfo>();
+		const auto &child_types = StructType::GetChildTypes(value.type());
 
 		auto all_keys_are_empty = true;
 		for (uint64_t idx = 0; idx < children.size(); ++idx) {
-			if (!type_info.child_types[idx].first.empty()) {
+			if (!child_types[idx].first.empty()) {
 				all_keys_are_empty = false;
 				break;
 			}
 		}
 
-		// Unnamed struct -> just create tuples
 		if (all_keys_are_empty) {
 			val = yyjson_mut_arr(doc);
 			for (auto &child : children) {
@@ -203,14 +214,13 @@ void ResultSerializer::SerializeValue( // NOLINT(*-no-recursion)
 		} else {
 			val = yyjson_mut_obj(doc);
 			for (uint64_t idx = 0; idx < children.size(); ++idx) {
-				string struct_name = type_info.child_types[idx].first;
-				SerializeValue(val, children[idx], struct_name, type_info.child_types[idx].second);
+				string struct_name = child_types[idx].first.GetIdentifierName();
+				SerializeValue(val, children[idx], struct_name, child_types[idx].second);
 			}
 		}
 
 		break;
 	}
-		// Not implemented types
 	case LogicalTypeId::MAP: {
 		auto &children = ListValue::GetChildren(value);
 		val = yyjson_mut_obj(doc);
@@ -227,7 +237,9 @@ void ResultSerializer::SerializeValue( // NOLINT(*-no-recursion)
 	case LogicalTypeId::TABLE:
 	case LogicalTypeId::POINTER:
 	case LogicalTypeId::VALIDITY:
-	case LogicalTypeId::AGGREGATE_STATE:
+	case LogicalTypeId::LEGACY_AGGREGATE_STATE:
+	case LogicalTypeId::UNBOUND:
+	case LogicalTypeId::TYPE:
 	case LogicalTypeId::LAMBDA:
 	case LogicalTypeId::ANY:
 	case LogicalTypeId::UNKNOWN:
