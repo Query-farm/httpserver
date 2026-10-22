@@ -1,0 +1,72 @@
+# name: test/sql/httpserver_auth.test
+# description: each auth mode accepts only its own header
+# group: [httpserver]
+
+require httpserver
+
+require json
+
+# Reading over HTTP needs httpfs, which may not be published for this DuckDB
+# version yet; skip the file when it cannot be loaded.
+require httpfs
+
+# A credential containing ':' selects HTTP Basic auth.
+query I
+SELECT httpserve_start('127.0.0.1', 8126, 'alice:s3cret');
+----
+HTTP server started on 127.0.0.1:8126
+
+statement ok
+CREATE SECRET basic_ok (TYPE http, EXTRA_HTTP_HEADERS MAP {'Authorization': 'Basic ' || to_base64('alice:s3cret'::BLOB)}, SCOPE 'http://127.0.0.1:8126/?q=SELECT 1 AS basic');
+
+query I
+SELECT basic FROM read_json_auto('http://127.0.0.1:8126/?q=SELECT 1 AS basic');
+----
+1
+
+statement ok
+CREATE SECRET basic_as_key (TYPE http, EXTRA_HTTP_HEADERS MAP {'X-API-Key': 'alice:s3cret'}, SCOPE 'http://127.0.0.1:8126/?q=SELECT 2 AS key');
+
+# The Basic credential is not accepted as an X-API-Key.
+statement error
+SELECT * FROM read_json_auto('http://127.0.0.1:8126/?q=SELECT 2 AS key');
+----
+401
+
+statement error
+SELECT * FROM read_json_auto('http://127.0.0.1:8126/?q=SELECT 3 AS none');
+----
+401
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
+
+# Any other credential is a shared key sent in X-API-Key.
+query I
+SELECT httpserve_start('127.0.0.1', 8127, 'supersecretkey');
+----
+HTTP server started on 127.0.0.1:8127
+
+statement ok
+CREATE SECRET key_ok (TYPE http, EXTRA_HTTP_HEADERS MAP {'X-API-Key': 'supersecretkey'}, SCOPE 'http://127.0.0.1:8127/?q=SELECT 4 AS key');
+
+query I
+SELECT key FROM read_json_auto('http://127.0.0.1:8127/?q=SELECT 4 AS key');
+----
+4
+
+statement ok
+CREATE SECRET key_as_basic (TYPE http, EXTRA_HTTP_HEADERS MAP {'Authorization': 'Basic ' || to_base64('supersecretkey'::BLOB)}, SCOPE 'http://127.0.0.1:8127/?q=SELECT 5 AS basic');
+
+# The key is not accepted through Basic auth.
+statement error
+SELECT * FROM read_json_auto('http://127.0.0.1:8127/?q=SELECT 5 AS basic');
+----
+401
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped

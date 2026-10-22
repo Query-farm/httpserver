@@ -1,0 +1,43 @@
+# name: test/sql/httpserver_start_errors.test
+# description: httpserve_start reports bind failures as errors instead of crashing the process
+# group: [httpserver]
+
+require httpserver
+
+# An address that can't be bound is an error from httpserve_start, and the session carries on.
+statement error
+SELECT httpserve_start('256.1.1.1', 8124, '');
+----
+Failed to start HTTP server on 256.1.1.1:8124
+
+query I
+SELECT 'still alive';
+----
+still alive
+
+# A failed start leaves nothing running, so the next start works.
+query I
+SELECT httpserve_start('127.0.0.1', 8124, '');
+----
+HTTP server started on 127.0.0.1:8124
+
+statement error
+SELECT httpserve_start('127.0.0.1', 8125, '');
+----
+HTTP server is already running
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
+
+# Port 0 lets the OS pick a free port, and the result reports the port actually bound.
+query I
+SELECT httpserve_start('127.0.0.1', 0, '') SIMILAR TO 'HTTP server started on 127\.0\.0\.1:[1-9][0-9]*';
+----
+true
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped

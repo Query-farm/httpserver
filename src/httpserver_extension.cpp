@@ -67,6 +67,28 @@ namespace duckdb
 		return out;
 	}
 
+	// Compares two strings in time that depends only on their lengths, so response timing doesn't reveal
+	// how much of a guessed credential is correct.
+	static bool ConstantTimeEquals(const std::string &a, const std::string &b)
+	{
+		if (a.size() != b.size())
+		{
+			return false;
+		}
+		unsigned char diff = 0;
+		for (size_t i = 0; i < a.size(); i++)
+		{
+			diff |= static_cast<unsigned char>(a[i] ^ b[i]);
+		}
+		return diff == 0;
+	}
+
+	// A credential containing ':' is a Basic auth user:password; anything else is an X-API-Key value.
+	static bool UsesBasicAuth()
+	{
+		return global_state.auth_token.find(':') != std::string::npos;
+	}
+
 	// Auth Check
 	bool IsAuthenticated(const duckdb_httplib_openssl::Request &req)
 	{
@@ -75,25 +97,33 @@ namespace duckdb
 			return true; // No authentication required if no token is set
 		}
 
-		// Check for X-API-Key header
-		auto api_key = req.get_header_value("X-API-Key");
-		if (!api_key.empty() && api_key == global_state.auth_token)
+		// Each mode accepts only its own header, so a user:password server can't be reached with an
+		// X-API-Key header, and a key server can't be reached with Basic auth.
+		if (!UsesBasicAuth())
 		{
-			return true;
+			auto api_key = req.get_header_value("X-API-Key");
+			return !api_key.empty() && ConstantTimeEquals(api_key, global_state.auth_token);
 		}
 
-		// Check for Basic Auth
 		auto auth = req.get_header_value("Authorization");
 		if (!auth.empty() && auth.compare(0, 6, "Basic ") == 0)
 		{
 			std::string decoded_auth = base64_decode(auth.substr(6));
-			if (decoded_auth == global_state.auth_token)
-			{
-				return true;
-			}
+			return ConstantTimeEquals(decoded_auth, global_state.auth_token);
 		}
 
 		return false;
+	}
+
+	// Any origin may call the server, but browsers never attach their own credentials (cookies, cached Basic
+	// auth): clients authenticate by setting a header explicitly. Allow-Credentials is not sent, since it is
+	// invalid together with a wildcard origin. A "*" in Allow-Headers does not cover Authorization, so it is
+	// listed explicitly.
+	static void SetCorsHeaders(duckdb_httplib_openssl::Response &res, const char *methods)
+	{
+		res.set_header("Access-Control-Allow-Origin", "*");
+		res.set_header("Access-Control-Allow-Methods", methods);
+		res.set_header("Access-Control-Allow-Headers", "*, Authorization, X-API-Key");
 	}
 
 	// Convert the query result to NDJSON (JSONEachRow) format
@@ -273,16 +303,17 @@ namespace duckdb
 		std::string query;
 
 		// CORS allow - set these headers for all requests
-		res.set_header("Access-Control-Allow-Origin", "*");
-		res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT");
-		res.set_header("Access-Control-Allow-Headers", "*");
-		res.set_header("Access-Control-Allow-Credentials", "true");
+		SetCorsHeaders(res, "GET, POST, OPTIONS, PUT");
 		res.set_header("Access-Control-Max-Age", "86400");
 
 		// Check authentication for actual requests (OPTIONS are handled separately)
 		if (!IsAuthenticated(req))
 		{
 			res.status = 401;
+			if (UsesBasicAuth())
+			{
+				res.set_header("WWW-Authenticate", "Basic realm=\"DuckDB\", charset=\"UTF-8\"");
+			}
 			res.set_content("Unauthorized", "text/plain");
 			return;
 		}
@@ -387,16 +418,24 @@ namespace duckdb
 		}
 	}
 
-	void HttpServerStart(shared_ptr<DatabaseInstance> db, string_t host, int32_t port, string_t auth = string_t())
+	// Starts the server and returns the port it listens on (the one picked by the OS when port is 0).
+	int32_t HttpServerStart(shared_ptr<DatabaseInstance> db, string_t host, int32_t port, string_t auth = string_t())
 	{
 		if (global_state.is_running)
 		{
 			throw IOException("HTTP server is already running");
 		}
 
+		// A listener thread that exited on its own (listen failed after binding) must be joined before the
+		// thread object is replaced, or destroying it terminates the process.
+		if (global_state.server_thread && global_state.server_thread->joinable())
+		{
+			global_state.server_thread->join();
+		}
+		global_state.server_thread.reset();
+
 		global_state.db_instance = db;
 		global_state.server = make_uniq<duckdb_httplib_openssl::Server>();
-		global_state.is_running = true;
 		global_state.auth_token = auth.GetString();
 
 		// Custom basepath, defaults to root /
@@ -417,11 +456,8 @@ namespace duckdb
 		global_state.server->Options(
 				base_path, [](const duckdb_httplib_openssl::Request & /*req*/, duckdb_httplib_openssl::Response &res)
 				{
-		    res.set_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT");
+		    SetCorsHeaders(res, "POST, GET, OPTIONS, PUT");
 		    res.set_header("Content-Type", "text/html; charset=utf-8");
-		    res.set_header("Access-Control-Allow-Headers", "*");
-		    res.set_header("Access-Control-Allow-Origin", "*");
-		    res.set_header("Access-Control-Allow-Credentials", "true");
 		    res.set_header("Connection", "close");
 		    res.status = 204; // No content for preflight
 		    return duckdb_httplib_openssl::Server::HandlerResponse::Handled; });
@@ -438,10 +474,7 @@ namespace duckdb
 														 [](const duckdb_httplib_openssl::Request &req, duckdb_httplib_openssl::Response &res)
 														 {
 															 // Set CORS headers for health check endpoint
-															 res.set_header("Access-Control-Allow-Origin", "*");
-															 res.set_header("Access-Control-Allow-Methods", "GET, OPTIONS");
-															 res.set_header("Access-Control-Allow-Headers", "Content-Type");
-															 res.set_header("Access-Control-Allow-Credentials", "true");
+															 SetCorsHeaders(res, "GET, OPTIONS");
 															 res.set_content("OK", "text/plain");
 														 });
 
@@ -517,11 +550,39 @@ namespace duckdb
 		const char *run_in_same_thread_env = std::getenv("DUCKDB_HTTPSERVER_FOREGROUND");
 		bool run_in_same_thread = (run_in_same_thread_env != nullptr && std::string(run_in_same_thread_env) == "1");
 
+#ifdef _WIN32
 		if (run_in_same_thread)
 		{
-#ifdef _WIN32
+			global_state.server.reset();
 			throw IOException("Foreground mode not yet supported on WIN32 platforms.");
-#else
+		}
+#endif
+
+		// Bind on the calling thread, so a port that is in use or a bad host is reported as an error from
+		// httpserve_start. An exception escaping the listener thread would terminate the whole process.
+		bool bound;
+		if (port == 0)
+		{
+			port = global_state.server->bind_to_any_port(host_str);
+			bound = port > 0;
+		}
+		else
+		{
+			bound = global_state.server->bind_to_port(host_str, port);
+		}
+		if (!bound)
+		{
+			global_state.server.reset();
+			global_state.db_instance = nullptr;
+			global_state.allocator.reset();
+			throw IOException("Failed to start HTTP server on " + host_str + ":" + std::to_string(port) +
+												": the address could not be bound (is the port already in use?)");
+		}
+		global_state.is_running = true;
+
+		if (run_in_same_thread)
+		{
+#ifndef _WIN32
 			// POSIX signal handler for SIGINT (Linux/macOS)
 			signal(SIGINT, [](int)
 						 {
@@ -533,11 +594,7 @@ namespace duckdb
 						 });
 
 			// Run the server in the same thread
-			if (!global_state.server->listen(host_str.c_str(), port))
-			{
-				global_state.is_running = false;
-				throw IOException("Failed to start HTTP server on " + host_str + ":" + std::to_string(port));
-			}
+			global_state.server->listen_after_bind();
 #endif
 
 			// The server has stopped (due to CTRL-C or other reasons)
@@ -545,14 +602,15 @@ namespace duckdb
 		}
 		else
 		{
-			// Run the server in a dedicated thread (default)
-			global_state.server_thread = make_uniq<std::thread>([host_str, port]()
+			// Run the server in a dedicated thread (default). Errors after binding can't be thrown from here,
+			// so the server is just marked as no longer running.
+			global_state.server_thread = make_uniq<std::thread>([]()
 																													{
-			if (!global_state.server->listen(host_str.c_str(), port)) {
+			if (!global_state.server->listen_after_bind()) {
 				global_state.is_running = false;
-				throw IOException("Failed to start HTTP server on " + host_str + ":" + std::to_string(port));
 			} });
 		}
+		return port;
 	}
 
 	void HttpServerStop()
@@ -596,9 +654,9 @@ namespace duckdb
 																										 {
 			    auto port = ((int32_t *)port_vector.GetData())[0];
 			    auto auth = ((string_t *)auth_vector.GetData())[0];
-			    HttpServerStart(db, host, port, auth);
+			    auto bound_port = HttpServerStart(db, host, port, auth);
 			    return StringVector::AddString(result, "HTTP server started on " + host.GetString() + ":" +
-			                                               std::to_string(port)); });
+			                                               std::to_string(bound_port)); });
 				});
 
 		auto httpserve_stop = ScalarFunction("httpserve_stop", {}, LogicalType::VARCHAR,
@@ -611,7 +669,7 @@ namespace duckdb
 		loader.RegisterFunction(httpserve_start);
 		loader.RegisterFunction(httpserve_stop);
 
-		QueryFarmSendTelemetry(loader, "httpserver", "2026102001");
+		QueryFarmSendTelemetry(loader, "httpserver", "2026102201");
 
 		// Register the cleanup function to be called at exit
 		std::atexit(HttpServerCleanup);
@@ -629,7 +687,7 @@ namespace duckdb
 
 	std::string HttpserverExtension::Version() const
 	{
-		return "2026102001";
+		return "2026102201";
 	}
 
 } // namespace duckdb
