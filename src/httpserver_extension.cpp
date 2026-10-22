@@ -585,10 +585,18 @@ namespace duckdb
 		HttpServerStop();
 	}
 
+	// Declares a positional-only parameter with a real name, so duckdb_functions() reports it instead of col<N>.
+	static FunctionParameter Positional(const char *name, LogicalType type) {
+		return FunctionParameter(name, std::move(type), {}, FunctionParameterKind::POSITIONAL_ONLY);
+	}
+
 	static void LoadInternal(ExtensionLoader &loader)
 	{
 		auto httpserve_start = ScalarFunction(
-				"httpserve_start", {LogicalType::VARCHAR, LogicalType::INTEGER, LogicalType::VARCHAR}, LogicalType::VARCHAR,
+				"httpserve_start",
+				{Positional("host", LogicalType::VARCHAR), Positional("port", LogicalType::INTEGER),
+				 Positional("auth", LogicalType::VARCHAR)},
+				LogicalType::VARCHAR,
 				[](DataChunk &args, ExpressionState &state, Vector &result)
 				{
 					auto &host_vector = args.data[0];
@@ -624,7 +632,7 @@ namespace duckdb
 		loader.RegisterFunction(httpserve_start);
 		loader.RegisterFunction(httpserve_stop);
 
-		QueryFarmSendTelemetry(loader, "httpserver", "2026102001");
+		QueryFarmSendTelemetry(loader, "httpserver", "2026102101");
 
 		// Register the cleanup function to be called at exit
 		std::atexit(HttpServerCleanup);
@@ -642,7 +650,7 @@ namespace duckdb
 
 	std::string HttpserverExtension::Version() const
 	{
-		return "2026102001";
+		return "2026102101";
 	}
 
 } // namespace duckdb

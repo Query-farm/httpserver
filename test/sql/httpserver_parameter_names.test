@@ -1,0 +1,30 @@
+# name: test/sql/httpserver_parameter_names.test
+# description: duckdb_functions() reports the declared parameter names instead of col<N>
+# group: [httpserver]
+
+require httpserver
+
+query II
+SELECT DISTINCT function_name, parameters FROM duckdb_functions()
+WHERE function_name IN ('httpserve_start', 'httpserve_stop')
+ORDER BY ALL;
+----
+httpserve_start	[host, port, auth]
+httpserve_stop	[]
+
+# The parameters are still positional: calls work as before
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
+
+query I
+SELECT httpserve_start('127.0.0.1', 8124, '');
+----
+HTTP server started on 127.0.0.1:8124
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
