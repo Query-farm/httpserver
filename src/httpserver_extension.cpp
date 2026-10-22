@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <mutex>
 #include <thread>
 #include "httpserver_extension.hpp"
 #include "query_stats.hpp"
@@ -638,8 +639,16 @@ namespace duckdb
 		}
 	}
 
+	// Runs while the process exits. The server is stopped, but the database it holds is deliberately leaked:
+	// destroying a DatabaseInstance this late runs DuckDB destructors after its thread-local state is gone (on
+	// Windows this handler runs while the extension DLL unloads), which crashes the exiting process. Committed
+	// data is already in the WAL, and the OS reclaims the memory.
 	static void HttpServerCleanup()
 	{
+		if (global_state.db_instance)
+		{
+			new shared_ptr<DatabaseInstance>(global_state.db_instance);
+		}
 		HttpServerStop();
 	}
 
@@ -693,8 +702,9 @@ namespace duckdb
 
 		QueryFarmSendTelemetry(loader, "httpserver", "2026102201");
 
-		// Register the cleanup function to be called at exit
-		std::atexit(HttpServerCleanup);
+		// Register the cleanup function to be called at exit, once per process rather than once per database
+		static std::once_flag cleanup_registered;
+		std::call_once(cleanup_registered, []() { std::atexit(HttpServerCleanup); });
 	}
 
 	void HttpserverExtension::Load(ExtensionLoader &loader)
