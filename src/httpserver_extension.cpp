@@ -616,6 +616,21 @@ namespace duckdb
 			if (!global_state.server->listen_after_bind()) {
 				global_state.is_running = false;
 			} });
+
+			// Return only once the accept loop is running. Some httplib versions ignore a stop() that arrives
+			// before then, which would leave httpserve_stop() waiting forever on a listener that never ends.
+			// This also reports a listen that fails after binding.
+			global_state.server->wait_until_ready();
+			if (!global_state.server->is_running())
+			{
+				global_state.server_thread->join();
+				global_state.server_thread.reset();
+				global_state.server.reset();
+				global_state.db_instance = nullptr;
+				global_state.allocator.reset();
+				global_state.is_running = false;
+				throw IOException("Failed to start HTTP server on " + host_str + ":" + std::to_string(port));
+			}
 		}
 		return port;
 	}
