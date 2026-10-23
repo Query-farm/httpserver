@@ -7,26 +7,17 @@
   </a>
 </p>
 
-# DuckDB HTTP Server Extension
+# HTTP Server Extension for DuckDB
 
-[![DuckDB](https://img.shields.io/badge/DuckDB-community_extension-fdf1e0?logo=duckdb&logoColor=fff000)](https://duckdb.org/community_extensions/extensions/httpserver.html)
-[![v1.5 build](https://github.com/Query-farm/httpserver/actions/workflows/MainDistributionPipeline.yml/badge.svg?branch=v1.5)](https://github.com/Query-farm/httpserver/actions/workflows/MainDistributionPipeline.yml?query=branch%3Av1.5)
+[![DuckDB](https://img.shields.io/badge/DuckDB-extension-fdf1e0?logo=duckdb&logoColor=fff000)](https://query.farm/products/extensions/httpserver/)
+[![v2.0 build](https://github.com/Query-farm/httpserver/actions/workflows/MainDistributionPipeline.yml/badge.svg?branch=v2.0)](https://github.com/Query-farm/httpserver/actions/workflows/MainDistributionPipeline.yml?query=branch%3Av2.0)
 
-This extension transforms **DuckDB** instances into tiny multi-player **HTTP OLAP API** services. Supports Authentication (Basic Auth or X-Token) and includes the *play* SQL user interface.
+Expose a running DuckDB process over HTTP for SQL queries and JSON results.
 
 ## Documentation
 
 Full documentation, including installation, usage, the function reference, and cookbook examples, is available at:
 
-**[https://query.farm/products/extensions/httpserver](https://query.farm/products/extensions/httpserver)**
+**[https://query.farm/products/extensions/httpserver/](https://query.farm/products/extensions/httpserver/)**
 
-## Installation
-
-```sql
-INSTALL httpserver FROM community;
-LOAD httpserver;
-```
-
-## Development
-
-For instructions on building the extension from source and running its tests, see [BUILDING.md](BUILDING.md).
+[Build and test](BUILDING.md)
