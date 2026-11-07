@@ -1,11 +1,21 @@
 # Testing this extension
-This directory contains all the tests for this extension. The `sql` directory holds tests that are written as [SQLLogicTests](https://duckdb.org/dev/sqllogictest/intro.html). DuckDB aims to have most its tests in this format as SQL statements, so for the quack extension, this should probably be the goal too.
 
-The root makefile contains targets to build and run all of these tests. To run the SQLLogicTests:
+The `sql` directory holds [SQLLogicTests](https://duckdb.org/dev/sqllogictest/intro.html), run with:
+
 ```bash
 make test
 ```
-or 
+
+Tests that send real HTTP requests to the server (`httpserver.test`, `httpserver_auth.test`,
+`httpserver_requests.test`) read from it with `httpfs`; they are skipped when `httpfs` can't be loaded.
+
+The `python` directory holds pytest tests that drive the server with plain HTTP requests (formats, auth,
+browser origin checks, port conflicts between two databases):
+
 ```bash
-make test_debug
+pip install duckdb pytest
+HTTPSERVER_EXTENSION_BINARY_PATH=build/release/extension/httpserver/httpserver.duckdb_extension \
+  pytest test/python
 ```
+
+The `duckdb` Python package must be the same DuckDB version the extension was built for.

@@ -20,9 +20,9 @@ SELECT httpserve_stop();
 HTTP server stopped
 
 query I
-SELECT httpserve_start('127.0.0.1', 8124, '');
+SELECT httpserve_start('127.0.0.1', 18124, '');
 ----
-HTTP server started on 127.0.0.1:8124
+HTTP server started on 127.0.0.1:18124
 
 query I
 SELECT httpserve_stop();

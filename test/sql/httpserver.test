@@ -7,7 +7,7 @@ SET autoinstall_known_extensions=1; SET autoload_known_extensions=1
 
 # Before we load the extension, this will fail
 statement error
-SELECT httpserve_start('0.0.0.0', 8123, '');
+SELECT httpserve_start('127.0.0.1', 18123, '');
 ----
 Catalog Error: Scalar Function with name httpserve_start does not exist!
 
@@ -16,9 +16,9 @@ require httpserver
 
 # Confirm the extension works
 query I
-SELECT httpserve_start('0.0.0.0', 8123, '');
+SELECT httpserve_start('127.0.0.1', 18123, '');
 ----
-HTTP server started on 0.0.0.0:8123
+HTTP server started on 127.0.0.1:18123
 
 require json
 
@@ -27,6 +27,11 @@ require json
 require httpfs
 
 query I
-SELECT * FROM read_json_auto('http://localhost:8123/?q=SELECT 1');
+SELECT * FROM read_json_auto('http://localhost:18123/?q=SELECT 1');
 ----
 1
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped

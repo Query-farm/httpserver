@@ -1,28 +1,38 @@
 # name: test/sql/httpserver_start_errors.test
-# description: httpserve_start reports bind failures as errors instead of crashing the process
+# description: httpserve_start reports bind failures and refused configurations as errors instead of crashing
 # group: [httpserver]
 
 require httpserver
 
 # An address that can't be bound is an error from httpserve_start, and the session carries on.
 statement error
-SELECT httpserve_start('256.1.1.1', 8124, '');
+SELECT httpserve_start('256.1.1.1', 18124, 'key');
 ----
-Failed to start HTTP server on 256.1.1.1:8124
+Failed to start HTTP server on 256.1.1.1:18124
 
 query I
 SELECT 'still alive';
 ----
 still alive
 
-# A failed start leaves nothing running, so the next start works.
-query I
-SELECT httpserve_start('127.0.0.1', 8124, '');
+statement error
+SELECT httpserve_start('127.0.0.1', 70000, '');
 ----
-HTTP server started on 127.0.0.1:8124
+port must be between 0 and 65535
 
 statement error
-SELECT httpserve_start('127.0.0.1', 8125, '');
+SELECT httpserve_start('127.0.0.1', -1, '');
+----
+port must be between 0 and 65535
+
+# A failed start leaves nothing running, so the next start works.
+query I
+SELECT httpserve_start('127.0.0.1', 18124, '');
+----
+HTTP server started on 127.0.0.1:18124
+
+statement error
+SELECT httpserve_start('127.0.0.1', 18125, '');
 ----
 HTTP server is already running
 
@@ -30,6 +40,27 @@ query I
 SELECT httpserve_stop();
 ----
 HTTP server stopped
+
+# Stopping twice is harmless.
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
+
+# Start, stop and restart on the same port.
+loop i 0 3
+
+query I
+SELECT httpserve_start('127.0.0.1', 18124, '');
+----
+HTTP server started on 127.0.0.1:18124
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
+
+endloop
 
 # Port 0 lets the OS pick a free port, and the result reports the port actually bound.
 query I
@@ -41,3 +72,100 @@ query I
 SELECT httpserve_stop();
 ----
 HTTP server stopped
+
+# A NULL host starts nothing; a NULL port means any free port and a NULL auth means none.
+query I
+SELECT httpserve_start(NULL, 18124, '');
+----
+NULL
+
+query I
+SELECT httpserve_start('localhost', NULL, NULL) SIMILAR TO 'HTTP server started on localhost:[1-9][0-9]*';
+----
+true
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
+
+# Without a credential, only loopback addresses may be served.
+statement error
+SELECT httpserve_start('0.0.0.0', 0, '');
+----
+refusing to serve 0.0.0.0 without authentication
+
+statement error
+SELECT httpserve_start('::', 0, NULL);
+----
+refusing to serve :: without authentication
+
+# With a credential, any address may be served.
+query I
+SELECT httpserve_start('0.0.0.0', 0, 'user:pass') SIMILAR TO 'HTTP server started on 0\.0\.0\.0:[1-9][0-9]*';
+----
+true
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
+
+# The refusal can be overridden explicitly.
+statement ok
+SET httpserver_allow_unauthenticated_remote = true;
+
+query I
+SELECT httpserve_start('0.0.0.0', 0, '') SIMILAR TO 'HTTP server started on 0\.0\.0\.0:[1-9][0-9]*';
+----
+true
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
+
+statement ok
+RESET httpserver_allow_unauthenticated_remote;
+
+# TLS needs both a certificate and a key, and they must load.
+statement ok
+SET httpserver_tls_cert = 'test/data/does-not-exist.pem';
+
+statement error
+SELECT httpserve_start('127.0.0.1', 0, '');
+----
+TLS needs both httpserver_tls_cert and httpserver_tls_key
+
+statement ok
+SET httpserver_tls_key = 'test/data/does-not-exist.key';
+
+statement error
+SELECT httpserve_start('127.0.0.1', 0, '');
+----
+could not load the TLS certificate
+
+statement ok
+RESET httpserver_tls_cert;
+
+statement ok
+RESET httpserver_tls_key;
+
+query I
+SELECT httpserve_start('127.0.0.1', 0, '') LIKE 'HTTP server started on %';
+----
+true
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
+
+# Starting a network listener is external access.
+statement ok
+SET enable_external_access = false;
+
+statement error
+SELECT httpserve_start('127.0.0.1', 0, '');
+----
+httpserve_start is disabled because enable_external_access is false

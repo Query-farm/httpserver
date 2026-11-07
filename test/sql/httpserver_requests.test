@@ -1,0 +1,102 @@
+# name: test/sql/httpserver_requests.test
+# description: output formats, browser origin checks and stopping from a served query
+# group: [httpserver]
+
+require httpserver
+
+# Reading over HTTP needs httpfs, which may not be published for this DuckDB
+# version yet; skip the file when it cannot be loaded.
+require httpfs
+
+query I
+SELECT httpserve_start('127.0.0.1', 18128, '');
+----
+HTTP server started on 127.0.0.1:18128
+
+# JSONEachRow (the default) keeps JSON types: numbers and booleans are not quoted.
+query I
+SELECT replace(content, chr(10), '|') FROM read_text('http://127.0.0.1:18128/?q=SELECT 1 AS a, 2.5 AS b, true AS c, NULL AS d, [1, 2] AS e');
+----
+{"a":1,"b":2.5,"c":true,"d":null,"e":[1,2]}|
+
+query I
+SELECT replace(content, chr(10), '|') FROM read_text('http://127.0.0.1:18128/?default_format=CSV&q=SELECT 1 AS a, 2 AS b');
+----
+a,b|1,2|
+
+query I
+SELECT replace(content, chr(10), '|') FROM read_text('http://127.0.0.1:18128/?default_format=XML&q=SELECT 1 AS a');
+----
+<results>|  <row>|    <column name="a">1</column>|  </row>|</results>|
+
+query I
+SELECT content LIKE '{"meta":[{"name":"a","type":"INTEGER"}],"data":[[1]],"rows":1,%' FROM read_text('http://127.0.0.1:18128/?default_format=JSONCompact&q=SELECT 1::INTEGER AS a');
+----
+true
+
+# SQL errors are reported as HTTP errors.
+statement error
+SELECT replace(content, chr(10), '|') FROM read_text('http://127.0.0.1:18128/?q=SELECT nonexistent_function()');
+----
+500
+
+# A served query can't stop the server that serves it (that would wait on its own thread).
+statement error
+SELECT replace(content, chr(10), '|') FROM read_text('http://127.0.0.1:18128/?q=SELECT httpserve_stop()');
+----
+500
+
+query I
+SELECT replace(content, chr(10), '|') FROM read_text('http://127.0.0.1:18128/?q=SELECT 42 AS still_running');
+----
+{"still_running":42}|
+
+# A web page on another origin can't make the browser run SQL.
+statement ok
+CREATE SECRET evil_origin (TYPE http, EXTRA_HTTP_HEADERS MAP {'Origin': 'http://evil.example'}, SCOPE 'http://127.0.0.1:18128/?q=SELECT 1 AS evil');
+
+statement error
+SELECT replace(content, chr(10), '|') FROM read_text('http://127.0.0.1:18128/?q=SELECT 1 AS evil');
+----
+403
+
+statement ok
+CREATE SECRET evil_site (TYPE http, EXTRA_HTTP_HEADERS MAP {'Sec-Fetch-Site': 'cross-site'}, SCOPE 'http://127.0.0.1:18128/?q=SELECT 2 AS evil');
+
+statement error
+SELECT replace(content, chr(10), '|') FROM read_text('http://127.0.0.1:18128/?q=SELECT 2 AS evil');
+----
+403
+
+# The server's own pages (same origin) may call it.
+statement ok
+CREATE SECRET same_origin (TYPE http, EXTRA_HTTP_HEADERS MAP {'Origin': 'http://127.0.0.1:18128'}, SCOPE 'http://127.0.0.1:18128/?q=SELECT 3 AS same');
+
+query I
+SELECT replace(content, chr(10), '|') FROM read_text('http://127.0.0.1:18128/?q=SELECT 3 AS same');
+----
+{"same":3}|
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped
+
+# Origins listed in httpserver_allowed_origins are allowed; the setting is read at start.
+statement ok
+SET httpserver_allowed_origins = 'https://app.example, http://evil.example';
+
+query I
+SELECT httpserve_start('127.0.0.1', 18128, '');
+----
+HTTP server started on 127.0.0.1:18128
+
+query I
+SELECT replace(content, chr(10), '|') FROM read_text('http://127.0.0.1:18128/?q=SELECT 1 AS evil');
+----
+{"evil":1}|
+
+query I
+SELECT httpserve_stop();
+----
+HTTP server stopped

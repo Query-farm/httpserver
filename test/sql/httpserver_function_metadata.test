@@ -1,0 +1,29 @@
+# name: test/sql/httpserver_function_metadata.test
+# description: every httpserver function has a description, examples, categories, parameter names and is volatile
+# group: [httpserver]
+
+require httpserver
+
+query I
+SELECT list(function_name ORDER BY function_name) FROM duckdb_functions()
+WHERE function_name LIKE 'httpserve\_%' ESCAPE '\'
+  AND (description IS NULL OR description = '' OR examples IS NULL OR len(examples) = 0
+       OR categories IS NULL OR len(categories) = 0 OR stability <> 'VOLATILE');
+----
+NULL
+
+query II
+SELECT function_name, categories FROM duckdb_functions()
+WHERE function_name LIKE 'httpserve\_%' ESCAPE '\'
+ORDER BY ALL;
+----
+httpserve_start	[network, server]
+httpserve_stop	[network, server]
+
+query II
+SELECT name, input_type FROM duckdb_settings() WHERE name LIKE 'httpserver\_%' ESCAPE '\' ORDER BY ALL;
+----
+httpserver_allow_unauthenticated_remote	BOOLEAN
+httpserver_allowed_origins	VARCHAR
+httpserver_tls_cert	VARCHAR
+httpserver_tls_key	VARCHAR
