@@ -18,7 +18,7 @@ still alive
 statement error
 SELECT httpserve_start('127.0.0.1', 70000, '');
 ----
-port must be between 0 and 65535
+port must be between 0 and 65535, got 70000
 
 statement error
 SELECT httpserve_start('127.0.0.1', -1, '');
@@ -99,6 +99,12 @@ statement error
 SELECT httpserve_start('::', 0, NULL);
 ----
 refusing to serve :: without authentication
+
+# A host name that merely starts with 127. is not a loopback address.
+statement error
+SELECT httpserve_start('127.example.com', 0, '');
+----
+refusing to serve 127.example.com without authentication
 
 # With a credential, any address may be served.
 query I

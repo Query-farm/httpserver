@@ -104,6 +104,8 @@ def test_cross_origin_is_refused(duckdb_conn):
     port = start(duckdb_conn)
     assert status_of(port, "SELECT 1", {'Origin': 'http://evil.example'}) == 403
     assert status_of(port, "SELECT 1", {'Host': 'evil.example'}) == 403
+    assert status_of(port, "SELECT 1", {'Host': f'127.0.0.1.evil.example:{port}'}) == 403
+    assert status_of(port, "SELECT 1", {'Host': f'localhost:{port}'}) == 200
     assert status_of(port, "SELECT 1", {'Origin': f'http://127.0.0.1:{port}'}) == 200
 
 

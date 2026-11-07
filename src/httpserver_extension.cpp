@@ -165,7 +165,23 @@ namespace duckdb
 	static bool IsLoopbackHost(const std::string &host_p)
 	{
 		auto host = StringUtil::Lower(StripBrackets(host_p));
-		return host == "localhost" || host == "::1" || StringUtil::StartsWith(host, "127.");
+		if (host == "localhost" || host == "::1")
+		{
+			return true;
+		}
+		// 127.0.0.0/8, written as a dotted IPv4 address (not a host name such as 127.example.com)
+		if (!StringUtil::StartsWith(host, "127."))
+		{
+			return false;
+		}
+		for (char c : host)
+		{
+			if (c != '.' && (c < '0' || c > '9'))
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
 	// The host name of a Host header, without the port.
@@ -677,8 +693,7 @@ namespace duckdb
 			}
 			if (port < 0 || port > 65535)
 			{
-				throw InvalidInputException("httpserve_start: port must be between 0 and 65535, got %lld",
-																		static_cast<long long>(port));
+				throw InvalidInputException("httpserve_start: port must be between 0 and 65535, got %d", port);
 			}
 
 			auto allow_unauthenticated_remote = GetSetting<bool>(context, ALLOW_UNAUTHENTICATED_REMOTE_SETTING, false);
